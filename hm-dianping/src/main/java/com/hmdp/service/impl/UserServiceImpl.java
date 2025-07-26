@@ -1,5 +1,8 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.bean.copier.CopyOptions;
+import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.RandomUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -9,6 +12,7 @@ import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.User;
 import com.hmdp.mapper.UserMapper;
 import com.hmdp.service.IUserService;
+import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 
@@ -19,11 +23,14 @@ import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpSession;
+import javax.swing.plaf.BorderUIResource;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
-import static com.hmdp.utils.RedisConstants.LOGIN_CODE_KEY;
-import static com.hmdp.utils.RedisConstants.LOGIN_CODE_TTL;
+import static com.hmdp.utils.RedisConstants.*;
 import static com.hmdp.utils.RegexUtils.isPhoneInvalid;
 import static com.hmdp.utils.SystemConstants.USER_NICK_NAME_PREFIX;
 
@@ -48,8 +55,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             return Result.fail("手机号格式错误");
         }
         String code = RandomUtil.randomNumbers(6);
+        log.debug("发送验证码：{}", code);
 
-        stringredisTemplate.opsForValue().set(LOGIN_CODE_KEY + phone, code, LOGIN_CODE_TTL);
+        stringredisTemplate.opsForValue().set(LOGIN_CODE_KEY + phone, code.trim(), LOGIN_CODE_TTL, TimeUnit.MINUTES);
 
         // 因为发送验证码需要阿里云短信服务，这里先返回成功
         log.info("发送验证码成功，验证码为：{}", code);
@@ -59,18 +67,19 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public Result login(LoginFormDTO loginForm, HttpSession session){
-        if (loginForm.getPhone() == null || isPhoneInvalid(loginForm.getPhone())){
+        String phone = loginForm.getPhone();
+
+        if (phone == null || isPhoneInvalid(loginForm.getPhone())){
             return Result.fail("手机号格式错误");
         }
 
-
-        Object cacheCode = session.getAttribute("code");
+        String cacheCode = stringredisTemplate.opsForValue().get(LOGIN_CODE_KEY + phone);
+        log.info("cacheCode: " + cacheCode);
+        cacheCode = cacheCode.trim();
         String code = loginForm.getCode();
-        if(!cacheCode.toString().equals(code)){
+        log.info("code: " + code);
+        if (!cacheCode.equals(code)){
             return Result.fail("验证码错误");
-        }
-        if(session.getAttribute("code")== null){
-            return Result.fail("验证码已过期");
         }
 
 
@@ -81,13 +90,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             user = createUserWithPhone(loginForm.getPhone());
         }
 
-        UserDTO userDTO = new UserDTO();
-        userDTO.setIcon(user.getIcon());
-        userDTO.setNickName(user.getNickName());
-        userDTO.setId(user.getId());
+        String token = UUID.randomUUID().toString(true);
+        UserDTO userDTO = BeanUtil.copyProperties(user, UserDTO.class);
 
-        session.setAttribute("user", userDTO);
-        return Result.ok();
+        Map<String, Object> userMap = BeanUtil.beanToMap(userDTO, new HashMap<>(),
+                CopyOptions.create()
+                        .setIgnoreNullValue(true)
+                        .setFieldValueEditor((fieldName, fieldValue) -> fieldValue.toString()));
+
+        stringredisTemplate.opsForHash().putAll(LOGIN_USER_KEY + token, userMap);
+        stringredisTemplate.expire(LOGIN_USER_KEY + token, LOGIN_USER_TTL, TimeUnit.MINUTES);
+        return Result.ok(token);
     }
 
     private User createUserWithPhone(String phone) {
@@ -97,6 +110,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         save(user);
         return user;
     }
+
 
     @Override
     public Result logout() {
