@@ -28,7 +28,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         "/voucher/**"
                 );
         registry.addInterceptor(new RefreshTokenInterceptor(stringRedisTemplate))
-                .addPathPatterns("/**");
+                .addPathPatterns("/**").order(0);
 
 
     }

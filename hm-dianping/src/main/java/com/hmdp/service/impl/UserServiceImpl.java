@@ -74,17 +74,16 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         }
 
         String cacheCode = stringredisTemplate.opsForValue().get(LOGIN_CODE_KEY + phone);
-        log.info("cacheCode: " + cacheCode);
+
         cacheCode = cacheCode.trim();
         String code = loginForm.getCode();
-        log.info("code: " + code);
+
         if (!cacheCode.equals(code)){
             return Result.fail("验证码错误");
         }
 
-
         // 查询用户 SELECT * FROM user WHERE phone = ?
-        User user = query().eq("phone", loginForm.getPhone()).one();
+        User user = query().eq("phone", phone).one();
 
         if (user == null){
             user = createUserWithPhone(loginForm.getPhone());
